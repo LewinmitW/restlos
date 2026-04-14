@@ -10,8 +10,8 @@ export function AuthProvider({ children }) {
   const checkSession = useCallback(async () => {
     try {
       const res = await api('auth/session.php')
-      if (res.success && res.data?.user) {
-        setUser(res.data.user)
+      if (res.success && res.data?.id) {
+        setUser(res.data)
       } else {
         setUser(null)
       }
@@ -32,7 +32,7 @@ export function AuthProvider({ children }) {
       body: JSON.stringify({ email, password }),
     })
     if (res.success) {
-      setUser(res.data.user)
+      setUser(res.data)
       return { success: true }
     }
     return { success: false, error: res.error }
@@ -44,7 +44,7 @@ export function AuthProvider({ children }) {
       body: JSON.stringify({ name, email, password }),
     })
     if (res.success) {
-      setUser(res.data.user)
+      setUser(res.data)
       return { success: true }
     }
     return { success: false, error: res.error }
