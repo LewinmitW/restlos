@@ -1,0 +1,18 @@
+Options -Indexes
+DirectoryIndex index.php
+
+# Disable directory browsing
+Options All -Indexes
+
+# PHP settings
+php_flag display_errors Off
+php_flag log_errors On
+
+# Security headers
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+
+# Allow CORS preflight to reach PHP
+RewriteEngine On
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^ - [L]
