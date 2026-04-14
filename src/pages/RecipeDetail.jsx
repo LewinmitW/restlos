@@ -6,6 +6,7 @@ import Header from '../components/Header'
 import Stepper from '../components/Stepper'
 import BottomSheet from '../components/BottomSheet'
 import LoadingSpinner from '../components/LoadingSpinner'
+import EmptyState from '../components/EmptyState'
 import { Heart, Clock, Users, Edit2, ShoppingCart, Check, ChefHat } from 'lucide-react'
 import { scaleAmount, formatAmount } from '../utils/formatters'
 
@@ -105,9 +106,7 @@ export default function RecipeDetail() {
     setMarkingCooked(false)
   }
 
-  const steps = (() => {
-    try { return JSON.parse(recipe.steps || '[]') } catch { return recipe.steps ? [recipe.steps] : [] }
-  })()
+  const steps = Array.isArray(recipe.steps) ? recipe.steps : []
 
   return (
     <div>
@@ -148,7 +147,7 @@ export default function RecipeDetail() {
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
           {recipe.is_meal_prep && <span className="chip-tag chip-tag-orange">Meal Prep</span>}
           {recipe.is_cold_edible && <span className="chip-tag chip-tag-neutral">Kalt essbar</span>}
-          {recipe.tags && recipe.tags.split(',').map(t => t.trim()).filter(Boolean).map(tag => (
+          {(Array.isArray(recipe.tags) ? recipe.tags : (recipe.tags || '').split(',')).map(t => t.trim()).filter(Boolean).map(tag => (
             <span key={tag} className="chip-tag chip-tag-neutral">{tag}</span>
           ))}
         </div>
