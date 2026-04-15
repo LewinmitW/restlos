@@ -334,7 +334,7 @@ export default function Pantry() {
           <button
             className="btn btn-primary-solid"
             onClick={handleAddSubmit}
-            disabled={addLoading || (!selectedIngredient && !addSearch)}
+            disabled={addLoading || !selectedIngredient}
             style={{ marginTop: 8 }}
           >
             {addLoading ? 'Hinzufügen...' : 'Hinzufügen'}

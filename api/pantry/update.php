@@ -16,10 +16,15 @@ $stmt = $db->prepare('SELECT id FROM pantry WHERE id = ? AND user_id = ?');
 $stmt->execute([$id, $user['id']]);
 if (!$stmt->fetch()) json_error('Eintrag nicht gefunden', 404);
 
+$qtyLabels = ['viel' => 3, 'wenig' => 2, 'rest' => 1];
+
 $fields = [];
 $vals   = [];
 
-if (isset($body['qty']))        { $fields[] = 'qty = ?';        $vals[] = (float)$body['qty']; }
+if (isset($body['quantity'])) {
+    $fields[] = 'qty = ?';
+    $vals[]   = (float)($qtyLabels[$body['quantity']] ?? 3);
+}
 if (isset($body['unit']))       { $fields[] = 'unit = ?';       $vals[] = sanitize($body['unit']); }
 if (isset($body['location']))   { $fields[] = 'location = ?';   $vals[] = sanitize($body['location']); }
 if (isset($body['expires_at'])) { $fields[] = 'expires_at = ?'; $vals[] = $body['expires_at']; }

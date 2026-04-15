@@ -32,7 +32,7 @@ export default function RecipeDetail() {
       const res = await api(`recipes/get.php?id=${id}`)
       if (res.success) {
         setRecipe(res.data)
-        setPortions(res.data.base_servings || 1)
+        setPortions(res.data.portions || 2)
       }
     } catch {}
     setLoading(false)
@@ -65,7 +65,7 @@ export default function RecipeDetail() {
       try {
         await api('shopping/add.php', {
           method: 'POST',
-          body: JSON.stringify({ ingredient_id: ing.ingredient_id, amount: `${scaleAmount(ing.amount, recipe.base_servings, portions)} ${ing.unit}` }),
+          body: JSON.stringify({ ingredient_id: ing.ingredient_id, qty: scaleAmount(ing.amount, recipe.portions, portions), unit: ing.unit }),
         })
       } catch {}
     }
@@ -91,9 +91,9 @@ export default function RecipeDetail() {
         method: 'POST',
         body: JSON.stringify({
           id: recipe.id,
-          last_cooked: new Date().toISOString().split('T')[0],
           deduct_pantry: deductPantry ? 1 : 0,
           portions,
+          base_portions: recipe.portions || 2,
         }),
       })
       dispatch({ type: 'UPDATE_RECIPE', payload: { id: recipe.id, last_cooked: new Date().toISOString().split('T')[0] } })
@@ -208,7 +208,7 @@ export default function RecipeDetail() {
                   {ing.is_optional && <span style={{ fontSize: 11, color: 'var(--color-on-surface-variant)', marginLeft: 6 }}>optional</span>}
                 </span>
                 <span style={{ fontSize: 14, color: 'var(--color-on-surface-variant)', marginRight: isMissing ? 12 : 0 }}>
-                  {formatAmount(scaleAmount(ing.amount, recipe.base_servings, portions), ing.unit)}
+                  {formatAmount(scaleAmount(ing.amount, recipe.portions, portions), ing.unit)}
                 </span>
                 {isMissing && (
                   <button

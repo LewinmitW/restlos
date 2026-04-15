@@ -18,7 +18,8 @@ if (!$week || !$year) {
 
 $stmt = $db->prepare('
     SELECT wp.id, wp.recipe_id, wp.slot_type, wp.day_index, wp.portions,
-           r.name, r.category, r.prep_time, r.is_meal_prep, r.kalt_essbar,
+           r.name, r.category, r.prep_time, r.is_meal_prep,
+           r.kalt_essbar AS is_cold_edible, r.shelf_life_days,
            r.image_url, r.tags
     FROM week_plan wp
     JOIN recipes r ON r.id = wp.recipe_id
@@ -29,9 +30,9 @@ $stmt->execute([$user['id'], $week, $year]);
 $slots = $stmt->fetchAll();
 
 foreach ($slots as &$slot) {
-    $slot['is_meal_prep'] = (bool)$slot['is_meal_prep'];
-    $slot['kalt_essbar']  = (bool)$slot['kalt_essbar'];
-    $slot['tags']         = $slot['tags'] ? explode(',', $slot['tags']) : [];
+    $slot['is_meal_prep']   = (bool)$slot['is_meal_prep'];
+    $slot['is_cold_edible'] = (bool)$slot['is_cold_edible'];
+    $slot['tags']           = $slot['tags'] ? explode(',', $slot['tags']) : [];
 }
 
 json_success([

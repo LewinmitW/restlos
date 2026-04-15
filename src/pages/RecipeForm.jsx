@@ -66,20 +66,25 @@ export default function RecipeForm() {
         setName(r.name || '')
         setCategory(r.category || 'abend')
         setPrepTime(r.prep_time || 30)
-        setBaseServings(r.base_servings || 1)
+        setBaseServings(r.portions || 2)
         setIsMealPrep(!!r.is_meal_prep)
-        setIsColdEdible(!!r.is_cold_edible)
+        setIsColdEdible(!!(r.kalt_essbar ?? r.is_cold_edible))
         setShelfLifeDays(r.shelf_life_days || 3)
         setBatchPortions(r.batch_portions || 2)
-        setTags(r.tags || '')
+        setTags(Array.isArray(r.tags) ? r.tags.join(', ') : (r.tags || ''))
         setNotes(r.notes || '')
-        setIsFavorite(!!r.is_favorite)
+        setIsFavorite(!!(r.favorite ?? r.is_favorite))
         if (r.ingredients?.length > 0) {
-          setIngredients(r.ingredients.map(ing => ({ ...ing, _key: ing.id })))
+          setIngredients(r.ingredients.map((ing, i) => ({
+            ...ing,
+            _key: ing.ingredient_id + '_' + i,
+            ingredient_name: ing.ingredient_name || ing.name || '',
+            is_optional: !!(ing.optional ?? ing.is_optional),
+          })))
         }
-        const parsedSteps = (() => { try { return JSON.parse(r.steps || '[]') } catch { return r.steps ? [r.steps] : [] } })()
-        if (parsedSteps.length > 0) {
-          setSteps(parsedSteps.map(text => ({ _key: Date.now() + Math.random(), text })))
+        const rawSteps = Array.isArray(r.steps) ? r.steps : []
+        if (rawSteps.length > 0) {
+          setSteps(rawSteps.map(text => ({ _key: Date.now() + Math.random(), text: String(text) })))
         }
       }
     } catch {}
@@ -117,15 +122,15 @@ export default function RecipeForm() {
       name: name.trim(),
       category,
       prep_time: parseInt(prepTime),
-      base_servings: parseInt(baseServings),
+      portions: parseInt(baseServings),
       is_meal_prep: isMealPrep ? 1 : 0,
-      is_cold_edible: isColdEdible ? 1 : 0,
+      kalt_essbar: isColdEdible ? 1 : 0,
       shelf_life_days: isMealPrep ? parseInt(shelfLifeDays) : 0,
       batch_portions: isMealPrep ? parseInt(batchPortions) : 1,
       is_favorite: isFavorite ? 1 : 0,
       tags: tags.trim(),
       notes: notes.trim(),
-      steps: JSON.stringify(steps.map(s => s.text).filter(Boolean)),
+      steps: steps.map(s => s.text).filter(Boolean),
       ingredients: ingredients
         .filter(ing => ing.ingredient_name || ing.ingredient_id)
         .map(ing => ({

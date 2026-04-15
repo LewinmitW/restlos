@@ -6,7 +6,7 @@ import Header from '../components/Header'
 import Stepper from '../components/Stepper'
 import LoadingSpinner from '../components/LoadingSpinner'
 import EmptyState from '../components/EmptyState'
-import { CalendarDays, ShoppingCart, RefreshCw, Info } from 'lucide-react'
+import { ShoppingCart, Info } from 'lucide-react'
 
 const MEAL_PREF_OPTIONS = [
   { value: 'kalt',      label: 'Kalt' },
@@ -79,9 +79,9 @@ export default function WeekPlanner() {
     dispatch({ type: 'SET_WEEK_PLAN', payload: null })
   }
 
-  // Group recipes by type
-  const prepRecipes = weekPlan?.recipes?.filter(r => r.meal_type === 'prep') || []
-  const freshRecipes = weekPlan?.recipes?.filter(r => r.meal_type === 'frisch') || []
+  // Group slots by type
+  const prepRecipes  = weekPlan?.slots?.filter(s => s.slot_type === 'prep')   || []
+  const freshRecipes = weekPlan?.slots?.filter(s => s.slot_type === 'frisch') || []
 
   return (
     <div>
@@ -236,18 +236,18 @@ export default function WeekPlanner() {
 
             {/* Stat banner */}
             <div className="stat-banner" style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', gap: 16 }}>
+              <div style={{ display: 'flex', gap: 20 }}>
                 <div className="stat-item">
-                  <span className="stat-value">{weekPlan.meals_total || (prepRecipes.length + freshRecipes.length)}</span>
+                  <span className="stat-value">{prepRecipes.length + freshRecipes.length}</span>
                   <span className="stat-label">Mahlzeiten</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-value">{weekPlan.new_ingredients || '?'}</span>
-                  <span className="stat-label">neu</span>
+                  <span className="stat-value">{prepRecipes.length}</span>
+                  <span className="stat-label">Meal Prep</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-value">{weekPlan.pantry_ingredients || '?'}</span>
-                  <span className="stat-label">vorrätig</span>
+                  <span className="stat-value">{freshRecipes.length}</span>
+                  <span className="stat-label">Frisch</span>
                 </div>
               </div>
               <Info size={14} color="var(--color-on-surface-variant)" />
@@ -300,6 +300,8 @@ export default function WeekPlanner() {
   )
 }
 
+const DAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+
 function PlanRecipeCard({ item, type }) {
   const navigate = useNavigate()
 
@@ -307,90 +309,71 @@ function PlanRecipeCard({ item, type }) {
     return (
       <div
         className="recipe-card-asymmetric"
-        style={{ cursor: 'pointer' }}
+        style={{ cursor: 'pointer', minHeight: 160 }}
         onClick={() => navigate(`/rezept/${item.recipe_id}`)}
       >
         <div style={{
-          width: 137,
+          width: 150,
           flexShrink: 0,
           background: 'var(--color-surface-low)',
-          minHeight: 140,
+          minHeight: 160,
           position: 'relative',
+          overflow: 'hidden',
         }}>
           {item.image_url ? (
-            <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
           ) : (
             <div style={{
-              width: '100%', height: '100%', minHeight: 140,
+              width: '100%', height: '100%', minHeight: 160,
               background: 'linear-gradient(135deg, var(--color-primary-container), var(--color-surface-high))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40,
             }}>
               🥘
             </div>
           )}
         </div>
-        <div style={{ flex: 1, padding: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ flex: 1, padding: '20px 20px', display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center' }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {item.is_cold_edible ? (
-              <span className="chip-tag chip-tag-orange-solid">Kalt essbar</span>
-            ) : (
-              <span className="chip-tag chip-tag-neutral">Aufwärmen</span>
-            )}
-            {item.shelf_life_days ? (
-              <span className="chip-tag chip-tag-neutral">{item.shelf_life_days} Tage</span>
-            ) : null}
+            {item.is_cold_edible
+              ? <span className="chip-tag chip-tag-orange-solid">Kalt essbar</span>
+              : <span className="chip-tag chip-tag-neutral">Aufwärmen</span>
+            }
+            {item.shelf_life_days
+              ? <span className="chip-tag chip-tag-neutral">{item.shelf_life_days}d</span>
+              : null}
           </div>
-          <h3 style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.25, letterSpacing: '-0.01em' }}>
+          <h3 style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.02em', color: 'var(--color-on-surface)' }}>
             {item.name}
           </h3>
-          <div style={{ display: 'flex', gap: 12, fontSize: 14, color: 'var(--color-on-surface-variant)' }}>
-            {item.portions && <span>🍽 {item.portions}</span>}
-            {item.prep_time && <span>⏱ {item.prep_time} min</span>}
+          <div style={{ display: 'flex', gap: 16, fontSize: 15, color: 'var(--color-on-surface-variant)', fontWeight: 500 }}>
+            {item.portions ? <span>🍽 {item.portions} Port.</span> : null}
+            {item.prep_time ? <span>⏱ {item.prep_time} min</span> : null}
           </div>
-          {item.days && (
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              {item.days.map(d => (
-                <span key={d} className="day-circle">{DAY_LABELS[d] || d}</span>
-              ))}
-              <button
-                style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: 4 }}
-                onClick={e => { e.stopPropagation() }}
-              >
-                <RefreshCw size={10} />
-                Austauschen
-              </button>
-            </div>
-          )}
         </div>
       </div>
     )
   }
 
   // Fresh cooking row
+  const dayNum = (item.day_index || 0) % 7
   return (
     <div
       className="recipe-card-row"
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer', padding: '18px 16px', gap: 0 }}
       onClick={() => navigate(`/rezept/${item.recipe_id}`)}
     >
-      <div className="day-badge">
-        {DAY_LABELS[item.day_of_week] || '?'}
+      <div className="day-badge" style={{ fontSize: 15, fontWeight: 700 }}>
+        {DAY_NAMES[dayNum] || `T${item.day_index}`}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-on-surface)' }}>
+      <div style={{ flex: 1, minWidth: 0, paddingLeft: 16 }}>
+        <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-on-surface)', lineHeight: 1.3 }}>
           {item.name}
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-on-surface-variant)', fontWeight: 500, letterSpacing: '0.02em', marginTop: 2 }}>
-          {item.prep_time ? `${item.prep_time} min` : ''}
-          {item.tags ? ` · ${item.tags.split(',')[0]}` : ''}
+        <div style={{ fontSize: 13, color: 'var(--color-on-surface-variant)', fontWeight: 500, marginTop: 4 }}>
+          {item.prep_time ? `⏱ ${item.prep_time} min` : ''}
+          {Array.isArray(item.tags) && item.tags[0] ? ` · ${item.tags[0]}` : ''}
         </div>
       </div>
-      <button
-        style={{ color: 'var(--color-outline-variant)' }}
-        onClick={e => { e.stopPropagation() }}
-      >
-        <RefreshCw size={14} />
-      </button>
     </div>
   )
 }

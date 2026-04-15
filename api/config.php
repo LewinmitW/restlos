@@ -4,10 +4,10 @@
 // Auf Hetzner ausfüllen!
 // ============================================
 
-define('DB_HOST', 'localhost');
+define('DB_HOST', 'l308.your-database.de');
 define('DB_NAME', 'restlos');
-define('DB_USER', 'root');
-define('DB_PASS', '');
+define('DB_USER', 'restlos_0');
+define('DB_PASS', 'y2&A{FkZ!A3@');
 
 define('API_URL',      'https://api.restlos.lewinstrobl.com');
 define('FRONTEND_URL', 'https://restlos.lewinstrobl.com');

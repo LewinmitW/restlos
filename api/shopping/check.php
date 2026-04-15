@@ -11,7 +11,9 @@ $body = get_body();
 $id   = (int)($body['id'] ?? 0);
 if (!$id) json_error('ID fehlt');
 
-$checked = isset($body['checked']) ? (int)(bool)$body['checked'] : 1;
+// Accept both 'is_checked' (frontend) and 'checked' (legacy)
+$checkedVal = $body['is_checked'] ?? $body['checked'] ?? 1;
+$checked    = (int)(bool)$checkedVal;
 
 $db   = get_db();
 $stmt = $db->prepare('UPDATE shopping_list SET checked = ? WHERE id = ? AND user_id = ?');
