@@ -45,9 +45,12 @@ function AppShell() {
       <div className="page-content">
         <Suspense fallback={<LoadingScreen />}>
           <Routes>
-            <Route path="/"               element={<Navigate to="/woche" replace />} />
-            <Route path="/woche"          element={<WeekPlanner />} />
-            <Route path="/woche/jetzt"    element={<QuickCook />} />
+            <Route path="/"               element={<Navigate to="/planen" replace />} />
+            <Route path="/planen"         element={<WeekPlanner />} />
+            <Route path="/planen/jetzt"   element={<QuickCook />} />
+            {/* legacy redirects */}
+            <Route path="/woche"          element={<Navigate to="/planen" replace />} />
+            <Route path="/woche/jetzt"    element={<Navigate to="/planen/jetzt" replace />} />
             <Route path="/vorrat"         element={<Pantry />} />
             <Route path="/liste"          element={<ShoppingList />} />
             <Route path="/rezepte"        element={<Recipes />} />

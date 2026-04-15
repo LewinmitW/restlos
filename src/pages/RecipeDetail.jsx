@@ -78,7 +78,8 @@ export default function RecipeDetail() {
         method: 'POST',
         body: JSON.stringify({
           ingredient_id: ing.ingredient_id,
-          amount: `${scaleAmount(ing.amount, recipe.base_servings, portions)} ${ing.unit}`,
+          qty: parseFloat(scaleAmount(ing.amount, recipe.portions, portions)) || 1,
+          unit: ing.unit,
         }),
       })
     } catch {}
@@ -87,7 +88,7 @@ export default function RecipeDetail() {
   const handleMarkCooked = async () => {
     setMarkingCooked(true)
     try {
-      await api('recipes/update.php', {
+      await api('recipes/cooked.php', {
         method: 'POST',
         body: JSON.stringify({
           id: recipe.id,

@@ -7,7 +7,6 @@ import BottomSheet from '../components/BottomSheet'
 import LoadingSpinner from '../components/LoadingSpinner'
 import EmptyState from '../components/EmptyState'
 import { Plus, Package, Thermometer, Archive, Snowflake, Star, AlertTriangle } from 'lucide-react'
-import { formatLocation } from '../utils/formatters'
 
 const LOCATION_ICONS = {
   kuehlschrank: <Thermometer size={14} />,
@@ -47,7 +46,6 @@ export default function Pantry() {
   const { pantry, pantryLoaded, dispatch, loadPantry } = useApp()
   const [search, setSearch] = useState('')
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
 
   // Add form state
   const [addSearch, setAddSearch] = useState('')
@@ -186,7 +184,7 @@ export default function Pantry() {
     <div>
       <Header
         right={
-          <button className="btn-icon" onClick={() => setSheetOpen(true)}>
+          <button className="btn-icon-round" onClick={() => setSheetOpen(true)}>
             <Plus size={16} color="white" />
           </button>
         }

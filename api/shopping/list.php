@@ -9,21 +9,22 @@ $db   = get_db();
 
 $stmt = $db->prepare('
     SELECT s.id, s.ingredient_id, s.qty, s.unit, s.checked AS is_checked, s.recipe_id,
-           i.name AS ingredient_name, i.supermarkt_kategorie,
+           s.custom_name, i.name AS ingredient_name, i.supermarkt_kategorie,
            r.name AS recipe_names
     FROM shopping_list s
-    JOIN ingredients i ON i.id = s.ingredient_id
+    LEFT JOIN ingredients i ON i.id = s.ingredient_id
     LEFT JOIN recipes r ON r.id = s.recipe_id
     WHERE s.user_id = ?
-    ORDER BY i.supermarkt_kategorie, i.name
+    ORDER BY i.supermarkt_kategorie, COALESCE(i.name, s.custom_name)
 ');
 $stmt->execute([$user['id']]);
 $items = $stmt->fetchAll();
 
 foreach ($items as &$item) {
-    $item['is_checked'] = (bool)$item['is_checked'];
-    $item['qty']        = (float)$item['qty'];
-    $item['amount']     = $item['qty'] > 0 ? $item['qty'] . ' ' . $item['unit'] : null;
+    $item['is_checked']           = (bool)$item['is_checked'];
+    $item['qty']                  = (float)$item['qty'];
+    $item['amount']               = $item['qty'] > 0 ? $item['qty'] . ($item['unit'] ? ' ' . $item['unit'] : '') : null;
+    $item['supermarkt_kategorie'] = $item['supermarkt_kategorie'] ?? 'sonstiges';
 }
 
 json_success($items);

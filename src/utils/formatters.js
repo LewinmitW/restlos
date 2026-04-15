@@ -90,7 +90,8 @@ export function formatSupermarketCategory(cat) {
 export function groupBySupermarketCategory(items) {
   const groups = {}
   for (const item of items) {
-    const cat = item.supermarket_category || 'sonstiges'
+    // API returns supermarkt_kategorie (German field name)
+    const cat = item.supermarkt_kategorie || item.supermarket_category || 'sonstiges'
     if (!groups[cat]) groups[cat] = []
     groups[cat].push(item)
   }

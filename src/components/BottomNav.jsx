@@ -4,9 +4,9 @@ import { CalendarDays, Package, ShoppingCart, BookOpen } from 'lucide-react'
 export default function BottomNav() {
   return (
     <nav className="bottom-nav">
-      <NavLink to="/woche" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+      <NavLink to="/planen" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <CalendarDays />
-        <span className="nav-label">Woche</span>
+        <span className="nav-label">Planen</span>
       </NavLink>
 
       <NavLink to="/vorrat" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>

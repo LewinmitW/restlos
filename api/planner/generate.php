@@ -9,10 +9,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_error('Method not allowed', 405)
 $user = require_auth();
 $body = get_body();
 
-$homeMeals  = (int)($body['home_meals'] ?? $body['meals_total'] ?? 5);
-$prepMeals  = (int)($body['prep_meals'] ?? $body['meals_prep'] ?? 2);
+// Support new day_assignments format AND legacy format
+$dayAssignments = $body['day_assignments'] ?? null; // [{day_index:1, slot_type:'frisch'}, ...]
+
+// Legacy fallback
+$homeMeals  = (int)($body['home_meals']   ?? $body['meals_total'] ?? 5);
+$prepMeals  = (int)($body['prep_meals']   ?? $body['meals_prep']  ?? 2);
 $priority   = $body['priority']   ?? 'balanced';
-$preference = $body['preference'] ?? '';
+$preferCold = !empty($body['prefer_cold']);
 $week       = (int)($body['week'] ?? (int)(new DateTime())->format('W'));
 $year       = (int)($body['year'] ?? (int)(new DateTime())->format('Y'));
 
@@ -34,30 +38,22 @@ foreach ($pantryRows as $row) {
 }
 
 // Load recipes
-$whereClause = 'r.user_id = ?';
-$params      = [$user['id']];
-
-if ($preference) {
-    $whereClause .= ' AND FIND_IN_SET(?, r.tags)';
-    $params[]     = $preference;
-}
-
 $stmt = $db->prepare("
     SELECT r.id, r.name, r.category, r.prep_time, r.portions, r.is_meal_prep,
            r.kalt_essbar AS is_cold_edible, r.shelf_life_days, r.batch_portions,
            r.tags, r.image_url, r.last_cooked
     FROM recipes r
-    WHERE $whereClause
+    WHERE r.user_id = ?
     ORDER BY r.last_cooked ASC, RAND()
 ");
-$stmt->execute($params);
+$stmt->execute([$user['id']]);
 $allRecipes = $stmt->fetchAll();
 
 if (empty($allRecipes)) {
     json_error('Keine Rezepte gefunden. Bitte erst Rezepte anlegen.');
 }
 
-// Load ingredients
+// Load ingredients per recipe
 $recipeIds    = array_column($allRecipes, 'id');
 $placeholders = implode(',', array_fill(0, count($recipeIds), '?'));
 $stmt         = $db->prepare("SELECT recipe_id, ingredient_id, optional FROM recipe_ingredients WHERE recipe_id IN ($placeholders)");
@@ -67,7 +63,7 @@ foreach ($stmt->fetchAll() as $ing) {
     $byRecipe[$ing['recipe_id']][] = $ing;
 }
 
-// Score each recipe
+// Score each recipe by pantry match
 $scored = array_map(function ($r) use ($byRecipe, $pantryAvailable, $immerDa) {
     $ings    = $byRecipe[$r['id']] ?? [];
     $total   = 0;
@@ -82,6 +78,7 @@ $scored = array_map(function ($r) use ($byRecipe, $pantryAvailable, $immerDa) {
     return $r;
 }, $allRecipes);
 
+// Sort by priority
 usort($scored, function ($a, $b) use ($priority) {
     if ($priority === 'pantry' || $priority === 'wenig_einkaufen') {
         return $b['match_pct'] <=> $a['match_pct'];
@@ -90,63 +87,125 @@ usort($scored, function ($a, $b) use ($priority) {
         $bDate = $b['last_cooked'] ? strtotime($b['last_cooked']) : 0;
         return $aDate <=> $bDate;
     }
+    // schnell / balanced
     $aScore = $a['match_pct'] - ($a['last_cooked'] ? (time() - strtotime($a['last_cooked'])) / (86400 * 30) : 1);
     $bScore = $b['match_pct'] - ($b['last_cooked'] ? (time() - strtotime($b['last_cooked'])) / (86400 * 30) : 1);
     return $bScore <=> $aScore;
 });
 
-$mealPrep = array_values(array_filter($scored, fn($r) => $r['is_meal_prep']));
-$fresh    = array_values(array_filter($scored, fn($r) => !$r['is_meal_prep']));
+// Separate prep vs fresh recipes
+$prepPool  = array_values(array_filter($scored, fn($r) =>  $r['is_meal_prep']));
+$freshPool = array_values(array_filter($scored, fn($r) => !$r['is_meal_prep']));
+
+// If preferCold: bias prep pool toward cold-edible
+if ($preferCold) {
+    usort($prepPool, fn($a, $b) => (int)$b['is_cold_edible'] <=> (int)$a['is_cold_edible']);
+}
 
 $slots = [];
 $used  = [];
 
-// Prep meals
-$prepCount = 0;
-foreach ($mealPrep as $r) {
-    if ($prepCount >= $prepMeals) break;
-    if (isset($used[$r['id']])) continue;
-    $slots[] = [
-        'recipe_id'      => $r['id'],
-        'slot_type'      => 'prep',
-        'day_index'      => 0,
-        'portions'       => $r['batch_portions'] ?? $r['portions'] ?? 2,
-        // Flat fields for frontend
-        'name'           => $r['name'],
-        'prep_time'      => $r['prep_time'],
-        'is_meal_prep'   => true,
-        'is_cold_edible' => (bool)$r['is_cold_edible'],
-        'shelf_life_days'=> $r['shelf_life_days'],
-        'image_url'      => $r['image_url'],
-        'tags'           => $r['tags'] ? explode(',', $r['tags']) : [],
-    ];
-    $used[$r['id']] = true;
-    $prepCount++;
+// ── NEW: day_assignments mode ────────────────────────────────────────────────
+if (!empty($dayAssignments) && is_array($dayAssignments)) {
+    $prepCursor  = 0;
+    $freshCursor = 0;
+
+    foreach ($dayAssignments as $assignment) {
+        $dayIndex = (int)($assignment['day_index'] ?? 0);
+        $slotType = ($assignment['slot_type'] ?? 'frisch') === 'prep' ? 'prep' : 'frisch';
+
+        if ($slotType === 'prep') {
+            // Pick next unused prep recipe
+            $recipe = null;
+            while ($prepCursor < count($prepPool)) {
+                $r = $prepPool[$prepCursor++];
+                if (!isset($used[$r['id']])) { $recipe = $r; break; }
+            }
+            // Fallback to fresh pool if no prep recipe available
+            if (!$recipe) {
+                while ($freshCursor < count($freshPool)) {
+                    $r = $freshPool[$freshCursor++];
+                    if (!isset($used[$r['id']])) { $recipe = $r; break; }
+                }
+            }
+        } else {
+            $recipe = null;
+            while ($freshCursor < count($freshPool)) {
+                $r = $freshPool[$freshCursor++];
+                if (!isset($used[$r['id']])) { $recipe = $r; break; }
+            }
+            // Fallback to prep pool
+            if (!$recipe) {
+                while ($prepCursor < count($prepPool)) {
+                    $r = $prepPool[$prepCursor++];
+                    if (!isset($used[$r['id']])) { $recipe = $r; break; }
+                }
+            }
+        }
+
+        if (!$recipe) continue; // no recipes left
+
+        $used[$recipe['id']] = true;
+        $slots[] = [
+            'recipe_id'       => $recipe['id'],
+            'slot_type'       => $slotType,
+            'day_index'       => $dayIndex,
+            'portions'        => $recipe['batch_portions'] ?? $recipe['portions'] ?? 2,
+            'name'            => $recipe['name'],
+            'prep_time'       => $recipe['prep_time'],
+            'is_meal_prep'    => (bool)$recipe['is_meal_prep'],
+            'is_cold_edible'  => (bool)$recipe['is_cold_edible'],
+            'shelf_life_days' => $recipe['shelf_life_days'],
+            'image_url'       => $recipe['image_url'],
+            'tags'            => $recipe['tags'] ? explode(',', $recipe['tags']) : [],
+        ];
+    }
+} else {
+    // ── LEGACY: meals_total / meals_prep mode ────────────────────────────────
+    $prepCount  = 0;
+    foreach ($prepPool as $r) {
+        if ($prepCount >= $prepMeals) break;
+        if (isset($used[$r['id']])) continue;
+        $slots[] = [
+            'recipe_id'       => $r['id'],
+            'slot_type'       => 'prep',
+            'day_index'       => 0,
+            'portions'        => $r['batch_portions'] ?? $r['portions'] ?? 2,
+            'name'            => $r['name'],
+            'prep_time'       => $r['prep_time'],
+            'is_meal_prep'    => true,
+            'is_cold_edible'  => (bool)$r['is_cold_edible'],
+            'shelf_life_days' => $r['shelf_life_days'],
+            'image_url'       => $r['image_url'],
+            'tags'            => $r['tags'] ? explode(',', $r['tags']) : [],
+        ];
+        $used[$r['id']] = true;
+        $prepCount++;
+    }
+
+    $freshCount = 0;
+    foreach ($freshPool as $r) {
+        if ($freshCount >= $homeMeals) break;
+        if (isset($used[$r['id']])) continue;
+        $slots[] = [
+            'recipe_id'       => $r['id'],
+            'slot_type'       => 'frisch',
+            'day_index'       => $freshCount + 1,
+            'portions'        => $r['portions'] ?? 2,
+            'name'            => $r['name'],
+            'prep_time'       => $r['prep_time'],
+            'is_meal_prep'    => false,
+            'is_cold_edible'  => (bool)$r['is_cold_edible'],
+            'shelf_life_days' => $r['shelf_life_days'],
+            'image_url'       => $r['image_url'],
+            'tags'            => $r['tags'] ? explode(',', $r['tags']) : [],
+        ];
+        $used[$r['id']] = true;
+        $freshCount++;
+    }
 }
 
-// Fresh meals
-$freshCount = 0;
-foreach ($fresh as $r) {
-    if ($freshCount >= $homeMeals) break;
-    if (isset($used[$r['id']])) continue;
-    $slots[] = [
-        'recipe_id'      => $r['id'],
-        'slot_type'      => 'frisch',
-        'day_index'      => $freshCount + 1,
-        'portions'       => $r['portions'] ?? 2,
-        'name'           => $r['name'],
-        'prep_time'      => $r['prep_time'],
-        'is_meal_prep'   => false,
-        'is_cold_edible' => (bool)$r['is_cold_edible'],
-        'shelf_life_days'=> $r['shelf_life_days'],
-        'image_url'      => $r['image_url'],
-        'tags'           => $r['tags'] ? explode(',', $r['tags']) : [],
-    ];
-    $used[$r['id']] = true;
-    $freshCount++;
-}
-
-// Save
+// Save plan
 $db->prepare('DELETE FROM week_plan WHERE user_id = ? AND week = ? AND year = ?')
    ->execute([$user['id'], $week, $year]);
 

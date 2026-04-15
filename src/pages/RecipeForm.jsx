@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import { api } from '../api/client'
+import { api, apiUpload } from '../api/client'
 import Header from '../components/Header'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { Plus, Minus, Trash2, GripVertical } from 'lucide-react'
+import { Plus, Minus, Trash2, Camera } from 'lucide-react'
 
 const CATEGORIES = [
   { value: 'fruehstueck', label: 'Frühstück' },
@@ -50,6 +50,9 @@ export default function RecipeForm() {
   const [tags, setTags] = useState('')
   const [notes, setNotes] = useState('')
   const [isFavorite, setIsFavorite] = useState(false)
+  const [imageUrl, setImageUrl] = useState('')
+  const [imageUploading, setImageUploading] = useState(false)
+  const imageInputRef = useRef(null)
 
   // Ingredient autocomplete
   const [suggestions, setSuggestions] = useState({})
@@ -74,6 +77,7 @@ export default function RecipeForm() {
         setTags(Array.isArray(r.tags) ? r.tags.join(', ') : (r.tags || ''))
         setNotes(r.notes || '')
         setIsFavorite(!!(r.favorite ?? r.is_favorite))
+        setImageUrl(r.image_url || '')
         if (r.ingredients?.length > 0) {
           setIngredients(r.ingredients.map((ing, i) => ({
             ...ing,
@@ -110,6 +114,20 @@ export default function RecipeForm() {
   const selectSuggestion = (idx, s) => {
     setIngredients(prev => prev.map((ing, i) => i === idx ? { ...ing, ingredient_id: s.id, ingredient_name: s.name, unit: s.default_unit || ing.unit } : ing))
     setSuggestions(prev => ({ ...prev, [idx]: [] }))
+  }
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file || !isEdit) return
+    setImageUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('image', file)
+      formData.append('recipe_id', id)
+      const res = await apiUpload('recipes/upload.php', formData)
+      if (res.success) setImageUrl(res.data.image_url)
+    } catch {}
+    setImageUploading(false)
   }
 
   const handleSubmit = async (e) => {
@@ -185,6 +203,47 @@ export default function RecipeForm() {
         {error && (
           <div style={{ background: 'var(--color-error-container)', color: 'var(--color-tertiary)', padding: '12px 16px', borderRadius: 12, marginBottom: 20, fontSize: 14 }}>
             {error}
+          </div>
+        )}
+
+        {/* Image picker (edit mode only) */}
+        {isEdit && (
+          <div style={{ marginBottom: 20 }}>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              style={{ display: 'none' }}
+              onChange={handleImageUpload}
+            />
+            <div
+              onClick={() => imageInputRef.current?.click()}
+              style={{
+                height: 140, borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
+                background: 'var(--color-surface-low)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                position: 'relative',
+              }}
+            >
+              {imageUrl ? (
+                <img src={imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+              ) : null}
+              <div style={{
+                position: 'relative', zIndex: 1,
+                background: 'rgba(0,0,0,0.35)',
+                borderRadius: 8, padding: '8px 14px',
+                display: 'flex', alignItems: 'center', gap: 6, color: 'white',
+              }}>
+                {imageUploading ? (
+                  <LoadingSpinner size={14} />
+                ) : (
+                  <Camera size={14} />
+                )}
+                <span style={{ fontSize: 13, fontWeight: 600 }}>
+                  {imageUploading ? 'Hochladen...' : imageUrl ? 'Bild ändern' : 'Foto hinzufügen'}
+                </span>
+              </div>
+            </div>
           </div>
         )}
 

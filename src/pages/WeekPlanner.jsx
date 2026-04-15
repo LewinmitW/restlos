@@ -3,85 +3,185 @@ import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { api } from '../api/client'
 import Header from '../components/Header'
-import Stepper from '../components/Stepper'
+import BottomSheet from '../components/BottomSheet'
 import LoadingSpinner from '../components/LoadingSpinner'
-import EmptyState from '../components/EmptyState'
-import { ShoppingCart, Info } from 'lucide-react'
+import { ShoppingCart, ChevronLeft, ChevronRight, Utensils, RefreshCw } from 'lucide-react'
 
-const MEAL_PREF_OPTIONS = [
-  { value: 'kalt',      label: 'Kalt' },
-  { value: 'warm',      label: 'Aufwärmen ok' },
-  { value: 'egal',      label: 'Egal' },
+// Day config: index matches day_index in DB (0=Sun, 1=Mon, ..., 6=Sat)
+const DAYS = [
+  { key: 'mo', label: 'Mo', short: 'Mo', index: 1 },
+  { key: 'di', label: 'Di', short: 'Di', index: 2 },
+  { key: 'mi', label: 'Mi', short: 'Mi', index: 3 },
+  { key: 'do', label: 'Do', short: 'Do', index: 4 },
+  { key: 'fr', label: 'Fr', short: 'Fr', index: 5 },
+  { key: 'sa', label: 'Sa', short: 'Sa', index: 6 },
+  { key: 'so', label: 'So', short: 'So', index: 0 },
 ]
 
-const PRIORITY_OPTIONS = [
-  { value: 'wenig_einkaufen', label: 'Wenig einkaufen' },
-  { value: 'abwechslung',     label: 'Abwechslung' },
-  { value: 'schnell',         label: 'Schnell kochen' },
+const MEAL_TYPES = [
+  { value: 'frisch', label: '🍳 Frisch kochen', desc: 'Direkt zubereiten' },
+  { value: 'prep',   label: '🥡 Meal Prep',    desc: 'Vorbereiten & mitnehmen' },
 ]
 
-const DAY_LABELS = { mo: 'Mo', di: 'Di', mi: 'Mi', do: 'Do', fr: 'Fr', sa: 'Sa', so: 'So' }
+function getWeekDates(weekOffset = 0) {
+  const now = new Date()
+  now.setDate(now.getDate() + weekOffset * 7)
+  const dayOfWeek = now.getDay() // 0=Sun
+  // Get Monday of the current week
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7))
+
+  const dates = []
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    dates.push(d)
+  }
+  // Return Mon-Sun
+  return dates
+}
+
+function getISOWeek(date) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7))
+  const week1 = new Date(d.getFullYear(), 0, 4)
+  return 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+}
 
 export default function WeekPlanner() {
   const navigate = useNavigate()
   const { weekPlan, weekPlanLoaded, dispatch, loadWeekPlan } = useApp()
 
   const [view, setView] = useState('woche') // 'woche' | 'jetzt'
+  const [weekOffset, setWeekOffset] = useState(0)
+  const [planSheetOpen, setPlanSheetOpen] = useState(false)
+  const [planStep, setPlanStep] = useState(1) // 1=days, 2=generating, 3=review
+  const [selectedDays, setSelectedDays] = useState(new Set())
+  const [dayTypes, setDayTypes] = useState({}) // {dayIndex: 'frisch'|'prep'}
+  const [preferCold, setPreferCold] = useState(false)
+  const [priority, setPriority] = useState('wenig_einkaufen')
+  const [suggestions, setSuggestions] = useState([]) // proposed slots
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
-
-  // Setup state
-  const [homeMeals, setHomeMeals] = useState(5)
-  const [prepMeals, setPrepMeals] = useState(4)
-  const [mealPref, setMealPref] = useState('kalt')
-  const [priority, setPriority] = useState('wenig_einkaufen')
 
   useEffect(() => {
     loadWeekPlan()
   }, [])
 
-  const handleGenerate = async () => {
-    setGenerating(true)
+  const weekDates = getWeekDates(weekOffset)
+  // weekDates[0]=Mon ... weekDates[6]=Sun
+  // Map dates to DAYS array: DAYS[0]=Mo(index1)...DAYS[6]=So(index0)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  // Build slot map: dayIndex → slot
+  const slotsByDay = {}
+  if (weekPlan?.slots) {
+    for (const slot of weekPlan.slots) {
+      slotsByDay[slot.day_index] = slot
+    }
+  }
+
+  const toggleDay = (dayIndex) => {
+    setSelectedDays(prev => {
+      const next = new Set(prev)
+      if (next.has(dayIndex)) {
+        next.delete(dayIndex)
+        setDayTypes(dt => { const n = { ...dt }; delete n[dayIndex]; return n })
+      } else {
+        next.add(dayIndex)
+        setDayTypes(dt => ({ ...dt, [dayIndex]: 'frisch' }))
+      }
+      return next
+    })
+  }
+
+  const setDayType = (dayIndex, type) => {
+    setDayTypes(prev => ({ ...prev, [dayIndex]: type }))
+  }
+
+  const handleOpenPlan = () => {
+    setSelectedDays(new Set())
+    setDayTypes({})
+    setPlanStep(1)
     setError('')
+    setSuggestions([])
+    setPlanSheetOpen(true)
+  }
+
+  const handleGenerate = async () => {
+    if (selectedDays.size === 0) {
+      setError('Bitte wähle mindestens einen Tag aus.')
+      return
+    }
+    setError('')
+    setPlanStep(2)
+    setGenerating(true)
     try {
+      const dayAssignments = [...selectedDays].map(dayIndex => ({
+        day_index: dayIndex,
+        slot_type: dayTypes[dayIndex] || 'frisch',
+      }))
+
       const res = await api('planner/generate.php', {
         method: 'POST',
         body: JSON.stringify({
-          meals_total: homeMeals + prepMeals,
-          meals_prep: prepMeals,
-          prefer_cold: mealPref === 'kalt' ? 1 : 0,
+          day_assignments: dayAssignments,
+          prefer_cold: preferCold ? 1 : 0,
           priority,
         }),
       })
+
       if (res.success) {
-        dispatch({ type: 'SET_WEEK_PLAN', payload: res.data })
+        setSuggestions(res.data.slots || [])
+        setPlanStep(3)
       } else {
         setError(res.error || 'Fehler beim Generieren')
+        setPlanStep(1)
       }
-    } catch (e) {
+    } catch {
       setError('Verbindungsfehler. Backend erreichbar?')
+      setPlanStep(1)
     }
     setGenerating(false)
+  }
+
+  const handleConfirmPlan = async () => {
+    try {
+      const now = new Date()
+      const week = getISOWeek(now)
+      const year = now.getFullYear()
+      const res = await api('planner/save.php', {
+        method: 'POST',
+        body: JSON.stringify({ week, year, slots: suggestions }),
+      })
+      if (res.success) {
+        dispatch({ type: 'SET_WEEK_PLAN', payload: { week, year, slots: suggestions } })
+        setPlanSheetOpen(false)
+      }
+    } catch {}
+  }
+
+  const handleSwapSlot = async (slotIndex) => {
+    // Re-generate just this slot by calling generate again
+    // For now: regenerate full plan with same params
+    await handleGenerate()
   }
 
   const handleCreateShoppingList = async () => {
     try {
       const res = await api('shopping/list.php', { method: 'GET' })
-      // Invalidate shopping list cache
       dispatch({ type: 'SET_SHOPPING', payload: res.data || [] })
-      navigate('/liste')
-    } catch {
-      navigate('/liste')
-    }
+    } catch {}
+    navigate('/liste')
   }
 
-  const handleEditPlan = () => {
+  const handleClearPlan = () => {
     dispatch({ type: 'SET_WEEK_PLAN', payload: null })
   }
 
-  // Group slots by type
-  const prepRecipes  = weekPlan?.slots?.filter(s => s.slot_type === 'prep')   || []
-  const freshRecipes = weekPlan?.slots?.filter(s => s.slot_type === 'frisch') || []
+  const hasPlan = weekPlan?.slots?.length > 0
 
   return (
     <div>
@@ -98,282 +198,350 @@ export default function WeekPlanner() {
           </button>
           <button
             className={`segmented-btn ${view === 'jetzt' ? 'active' : ''}`}
-            onClick={() => { setView('jetzt'); navigate('/woche/jetzt') }}
+            onClick={() => { setView('jetzt'); navigate('/planen/jetzt') }}
           >
             🍳 Jetzt
           </button>
         </div>
       </div>
 
-      {/* Content */}
       <div style={{ padding: '0 24px', paddingBottom: 24 }}>
 
-        {/* Page title */}
-        <div style={{ marginBottom: 24 }}>
-          <p style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-secondary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
-            DEIN PLAN
-          </p>
-          <h1 className="page-title">Diese Woche</h1>
+        {/* Page title + week nav */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <p className="page-subtitle">DEIN PLAN</p>
+            <h1 className="page-title" style={{ fontSize: 30 }}>Diese Woche</h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button
+              onClick={() => setWeekOffset(v => v - 1)}
+              style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--color-surface-high)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setWeekOffset(v => v + 1)}
+              style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--color-surface-high)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
 
-        {/* ─── STATE A: Setup ─── */}
-        {!weekPlan && (
+        {/* Loading state */}
+        {!weekPlanLoaded && <LoadingSpinner center />}
+
+        {weekPlanLoaded && (
           <>
-            <div className="card" style={{ padding: 24, marginBottom: 24 }}>
-              <h2 style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.025em', marginBottom: 24 }}>
-                Woche planen
-              </h2>
+            {/* Week Calendar Grid */}
+            <div className="week-calendar" style={{ marginBottom: 24 }}>
+              {DAYS.map((day, i) => {
+                const date = weekDates[i]
+                const slot = slotsByDay[day.index]
+                const isToday = date && date.getTime() === today.getTime()
+                const isPast  = date && date < today
 
-              {/* Meal counts */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: 24 }}>🍳</span>
-                    <span style={{ fontSize: 16, fontWeight: 500 }}>Zuhause kochen</span>
+                return (
+                  <div
+                    key={day.key}
+                    className={`day-cell ${isToday ? 'day-cell-today' : ''} ${isPast ? 'day-cell-past' : ''} ${slot ? 'day-cell-filled' : ''}`}
+                    onClick={() => slot && navigate(`/rezept/${slot.recipe_id}`)}
+                    style={{ cursor: slot ? 'pointer' : 'default' }}
+                  >
+                    <div className="day-cell-header">
+                      <span className="day-cell-label">{day.label}</span>
+                      {date && (
+                        <span className="day-cell-date">{date.getDate()}</span>
+                      )}
+                    </div>
+                    <div className="day-cell-content">
+                      {slot ? (
+                        <>
+                          <div className="day-cell-meal-type">
+                            {slot.slot_type === 'prep' ? '🥡' : '🍳'}
+                          </div>
+                          <div className="day-cell-meal-name">{slot.name}</div>
+                        </>
+                      ) : (
+                        <div className="day-cell-empty">–</div>
+                      )}
+                    </div>
                   </div>
-                  <Stepper value={homeMeals} onChange={setHomeMeals} min={0} max={14} />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: 24 }}>🥡</span>
-                    <span style={{ fontSize: 16, fontWeight: 500 }}>Zum Mitnehmen</span>
-                  </div>
-                  <Stepper value={prepMeals} onChange={setPrepMeals} min={0} max={14} />
-                </div>
-              </div>
-
-              <div className="divider" />
-
-              {/* Meal pref */}
-              <div style={{ marginTop: 16, marginBottom: 16 }}>
-                <p style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-on-surface-variant)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 }}>
-                  MITNEHM-ESSEN AM LIEBSTEN:
-                </p>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {MEAL_PREF_OPTIONS.map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`chip ${mealPref === opt.value ? 'chip-active' : 'chip-inactive'}`}
-                      onClick={() => setMealPref(opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Priority */}
-              <div style={{ marginBottom: 24 }}>
-                <p style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-on-surface-variant)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 }}>
-                  WORAUF ACHTEN?
-                </p>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {PRIORITY_OPTIONS.map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`chip ${priority === opt.value ? 'chip-active' : 'chip-inactive'}`}
-                      onClick={() => setPriority(opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {error && (
-                <div style={{
-                  background: 'var(--color-error-container)',
-                  color: 'var(--color-tertiary)',
-                  padding: '10px 14px',
-                  borderRadius: 'var(--radius-md)',
-                  fontSize: 14,
-                  marginBottom: 16,
-                }}>
-                  {error}
-                </div>
-              )}
-
-              <button
-                className="btn btn-primary"
-                onClick={handleGenerate}
-                disabled={generating}
-              >
-                {generating ? (
-                  <>
-                    <LoadingSpinner size={16} />
-                    Generiere...
-                  </>
-                ) : (
-                  'Woche vorschlagen ✨'
-                )}
-              </button>
+                )
+              })}
             </div>
 
-            {/* Editorial block */}
-            <div className="editorial-block">
-              <div className="editorial-text">
-                <h3 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3, letterSpacing: '-0.025em', marginBottom: 8 }}>
-                  Frische Ideen für deinen Pantry-Check.
-                </h3>
-                <p style={{ fontSize: 12, color: 'var(--color-on-surface-variant)', lineHeight: 1.6 }}>
-                  Reduziere Abfall und spare Zeit mit deinem persönlichen Planer.
-                </p>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* ─── STATE B: Week planned ─── */}
-        {weekPlan && (
-          <>
-            {/* Header with edit */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div />
-              <button className="btn-ghost" onClick={handleEditPlan} style={{ fontSize: 16 }}>
-                Bearbeiten
-              </button>
-            </div>
-
-            {/* Stat banner */}
-            <div className="stat-banner" style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', gap: 20 }}>
-                <div className="stat-item">
-                  <span className="stat-value">{prepRecipes.length + freshRecipes.length}</span>
-                  <span className="stat-label">Mahlzeiten</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-value">{prepRecipes.length}</span>
-                  <span className="stat-label">Meal Prep</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-value">{freshRecipes.length}</span>
-                  <span className="stat-label">Frisch</span>
-                </div>
-              </div>
-              <Info size={14} color="var(--color-on-surface-variant)" />
-            </div>
-
-            {/* Prep Day Section */}
-            {prepRecipes.length > 0 && (
-              <div style={{ marginBottom: 32 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <h2 className="section-title">🥘 Prep Day — Sonntag</h2>
-                  <span style={{ fontSize: 14, color: 'var(--color-on-surface-variant)' }}>
-                    ~{Math.round(prepRecipes.reduce((s, r) => s + (r.prep_time || 30), 0) / 60 * 2) / 2}h gesamt
-                  </span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {prepRecipes.map(item => (
-                    <PlanRecipeCard key={item.id} item={item} type="prep" />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Fresh cooking */}
-            {freshRecipes.length > 0 && (
-              <div style={{ marginBottom: 32 }}>
-                <h2 className="section-title" style={{ marginBottom: 16 }}>🍳 Frisch kochen</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {freshRecipes.map(item => (
-                    <PlanRecipeCard key={item.id} item={item} type="fresh" />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Create shopping list button */}
-            <div style={{ position: 'sticky', bottom: 'calc(var(--bottom-nav-height) + 16px)' }}>
+            {/* Action buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <button
                 className="btn btn-primary-solid"
-                onClick={handleCreateShoppingList}
+                onClick={handleOpenPlan}
                 style={{ gap: 8 }}
               >
-                <ShoppingCart size={20} />
-                Einkaufsliste erstellen
+                <Utensils size={18} />
+                Essen planen
               </button>
+
+              {hasPlan && (
+                <>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleCreateShoppingList}
+                    style={{ gap: 8, background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' }}
+                  >
+                    <ShoppingCart size={16} />
+                    Einkaufsliste erstellen
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={handleClearPlan}
+                    style={{ fontSize: 13, color: 'var(--color-on-surface-variant)', textAlign: 'center', padding: '8px 0' }}
+                  >
+                    Plan zurücksetzen
+                  </button>
+                </>
+              )}
             </div>
           </>
         )}
       </div>
+
+      {/* Planning Bottom Sheet */}
+      <BottomSheet
+        open={planSheetOpen}
+        onClose={() => setPlanSheetOpen(false)}
+        title={planStep === 1 ? 'Essen planen' : planStep === 2 ? 'Generiere...' : 'Vorschläge'}
+      >
+        {planStep === 1 && (
+          <PlanStepDays
+            weekDates={weekDates}
+            selectedDays={selectedDays}
+            dayTypes={dayTypes}
+            preferCold={preferCold}
+            priority={priority}
+            error={error}
+            onToggleDay={toggleDay}
+            onSetDayType={setDayType}
+            onPreferCold={setPreferCold}
+            onPriority={setPriority}
+            onGenerate={handleGenerate}
+          />
+        )}
+        {planStep === 2 && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 0', gap: 16 }}>
+            <LoadingSpinner size={32} />
+            <p style={{ fontSize: 15, color: 'var(--color-on-surface-variant)' }}>Rezeptvorschläge werden erstellt…</p>
+          </div>
+        )}
+        {planStep === 3 && (
+          <PlanStepReview
+            suggestions={suggestions}
+            weekDates={weekDates}
+            onConfirm={handleConfirmPlan}
+            onRegenerate={handleGenerate}
+            onBack={() => setPlanStep(1)}
+          />
+        )}
+      </BottomSheet>
     </div>
   )
 }
 
-const DAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+// ─── Step 1: Day + type picker ───────────────────────────────────────────────
 
-function PlanRecipeCard({ item, type }) {
+const PRIORITY_OPTIONS = [
+  { value: 'wenig_einkaufen', label: 'Wenig einkaufen' },
+  { value: 'abwechslung',     label: 'Abwechslung' },
+  { value: 'schnell',         label: 'Schnell kochen' },
+]
+
+function PlanStepDays({ weekDates, selectedDays, dayTypes, preferCold, priority, error,
+  onToggleDay, onSetDayType, onPreferCold, onPriority, onGenerate }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Day picker */}
+      <div>
+        <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-on-surface-variant)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+          AN WELCHEN TAGEN BRAUCHST DU ESSEN?
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+          {DAYS.map((day, i) => {
+            const date = weekDates[i]
+            const isSelected = selectedDays.has(day.index)
+            return (
+              <button
+                key={day.key}
+                onClick={() => onToggleDay(day.index)}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  padding: '8px 4px', borderRadius: 10, gap: 4,
+                  background: isSelected ? 'var(--color-primary)' : 'var(--color-surface-low)',
+                  color: isSelected ? 'white' : 'var(--color-on-surface)',
+                  transition: 'all 150ms',
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 600 }}>{day.label}</span>
+                {date && <span style={{ fontSize: 13, fontWeight: 700 }}>{date.getDate()}</span>}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Type picker for selected days */}
+      {selectedDays.size > 0 && (
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-on-surface-variant)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+            WAS PLANST DU FÜR DIESE TAGE?
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[...selectedDays].sort((a, b) => {
+              // sort Mon-Sun: 1,2,3,4,5,6,0
+              const order = [1,2,3,4,5,6,0]
+              return order.indexOf(a) - order.indexOf(b)
+            }).map(dayIndex => {
+              const day = DAYS.find(d => d.index === dayIndex)
+              const dateIndex = DAYS.indexOf(day)
+              const date = weekDates[dateIndex]
+              const currentType = dayTypes[dayIndex] || 'frisch'
+              return (
+                <div key={dayIndex} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--color-surface-low)', borderRadius: 10 }}>
+                  <div style={{ minWidth: 52, display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>{day?.label}</span>
+                    {date && <span style={{ fontSize: 11, color: 'var(--color-on-surface-variant)' }}>{date.getDate()}.{date.getMonth()+1}.</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                    {MEAL_TYPES.map(mt => (
+                      <button
+                        key={mt.value}
+                        onClick={() => onSetDayType(dayIndex, mt.value)}
+                        style={{
+                          flex: 1, padding: '6px 8px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                          background: currentType === mt.value ? 'var(--color-primary)' : 'var(--color-surface-high)',
+                          color: currentType === mt.value ? 'white' : 'var(--color-on-surface)',
+                        }}
+                      >
+                        {mt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Priority */}
+      <div>
+        <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-on-surface-variant)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+          WORAUF ACHTEN?
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {PRIORITY_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              className={`chip ${priority === opt.value ? 'chip-active' : 'chip-inactive'}`}
+              onClick={() => onPriority(opt.value)}
+              style={{ fontSize: 13 }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Cold pref */}
+      <div
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: 'var(--color-surface-low)', borderRadius: 10, cursor: 'pointer' }}
+        onClick={() => onPreferCold(!preferCold)}
+      >
+        <span style={{ fontSize: 14, fontWeight: 500 }}>🧊 Kalt essbares bevorzugen</span>
+        <div style={{ width: 40, height: 22, borderRadius: 11, background: preferCold ? 'var(--color-primary)' : 'var(--color-outline-variant)', position: 'relative', transition: 'background 200ms' }}>
+          <span style={{ position: 'absolute', top: 2, left: preferCold ? 20 : 2, width: 18, height: 18, borderRadius: '50%', background: 'white', transition: 'left 200ms' }} />
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ background: 'var(--color-error-container)', color: 'var(--color-tertiary)', padding: '10px 14px', borderRadius: 10, fontSize: 14 }}>
+          {error}
+        </div>
+      )}
+
+      <button
+        className="btn btn-primary-solid"
+        onClick={onGenerate}
+        disabled={selectedDays.size === 0}
+        style={{ gap: 8 }}
+      >
+        Vorschläge generieren ✨
+      </button>
+    </div>
+  )
+}
+
+// ─── Step 3: Review suggestions ──────────────────────────────────────────────
+
+const DAY_LABELS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+
+function PlanStepReview({ suggestions, weekDates, onConfirm, onRegenerate, onBack }) {
   const navigate = useNavigate()
 
-  if (type === 'prep') {
-    return (
-      <div
-        className="recipe-card-asymmetric"
-        style={{ cursor: 'pointer', minHeight: 160 }}
-        onClick={() => navigate(`/rezept/${item.recipe_id}`)}
-      >
-        <div style={{
-          width: 150,
-          flexShrink: 0,
-          background: 'var(--color-surface-low)',
-          minHeight: 160,
-          position: 'relative',
-          overflow: 'hidden',
-        }}>
-          {item.image_url ? (
-            <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
-          ) : (
-            <div style={{
-              width: '100%', height: '100%', minHeight: 160,
-              background: 'linear-gradient(135deg, var(--color-primary-container), var(--color-surface-high))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40,
-            }}>
-              🥘
-            </div>
-          )}
-        </div>
-        <div style={{ flex: 1, padding: '20px 20px', display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center' }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {item.is_cold_edible
-              ? <span className="chip-tag chip-tag-orange-solid">Kalt essbar</span>
-              : <span className="chip-tag chip-tag-neutral">Aufwärmen</span>
-            }
-            {item.shelf_life_days
-              ? <span className="chip-tag chip-tag-neutral">{item.shelf_life_days}d</span>
-              : null}
-          </div>
-          <h3 style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.02em', color: 'var(--color-on-surface)' }}>
-            {item.name}
-          </h3>
-          <div style={{ display: 'flex', gap: 16, fontSize: 15, color: 'var(--color-on-surface-variant)', fontWeight: 500 }}>
-            {item.portions ? <span>🍽 {item.portions} Port.</span> : null}
-            {item.prep_time ? <span>⏱ {item.prep_time} min</span> : null}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Fresh cooking row
-  const dayNum = (item.day_index || 0) % 7
   return (
-    <div
-      className="recipe-card-row"
-      style={{ cursor: 'pointer', padding: '18px 16px', gap: 0 }}
-      onClick={() => navigate(`/rezept/${item.recipe_id}`)}
-    >
-      <div className="day-badge" style={{ fontSize: 15, fontWeight: 700 }}>
-        {DAY_NAMES[dayNum] || `T${item.day_index}`}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <p style={{ fontSize: 13, color: 'var(--color-on-surface-variant)', lineHeight: 1.5 }}>
+        Prüfe die Vorschläge und bestätige deinen Plan.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 340, overflowY: 'auto' }}>
+        {suggestions.map((slot, i) => (
+          <div
+            key={i}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '12px 14px', background: 'var(--color-surface-low)', borderRadius: 12,
+            }}
+          >
+            <div className="day-badge" style={{ flexShrink: 0, fontSize: 13, fontWeight: 700, width: 44, height: 44 }}>
+              {DAY_LABELS[slot.day_index] || `T${slot.day_index}`}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-on-surface)', lineHeight: 1.3 }}>
+                {slot.name}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-on-surface-variant)', marginTop: 2 }}>
+                {slot.slot_type === 'prep' ? '🥡 Meal Prep' : '🍳 Frisch'}
+                {slot.prep_time ? ` · ${slot.prep_time} min` : ''}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
-      <div style={{ flex: 1, minWidth: 0, paddingLeft: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-on-surface)', lineHeight: 1.3 }}>
-          {item.name}
-        </div>
-        <div style={{ fontSize: 13, color: 'var(--color-on-surface-variant)', fontWeight: 500, marginTop: 4 }}>
-          {item.prep_time ? `⏱ ${item.prep_time} min` : ''}
-          {Array.isArray(item.tags) && item.tags[0] ? ` · ${item.tags[0]}` : ''}
-        </div>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button
+          style={{ flex: 1, padding: '12px', borderRadius: 12, background: 'var(--color-surface-high)', color: 'var(--color-on-surface)', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+          onClick={onRegenerate}
+        >
+          <RefreshCw size={14} />
+          Neu generieren
+        </button>
+        <button
+          className="btn btn-primary-solid"
+          style={{ flex: 2 }}
+          onClick={onConfirm}
+        >
+          Plan bestätigen ✓
+        </button>
       </div>
+
+      <button
+        onClick={onBack}
+        style={{ fontSize: 13, color: 'var(--color-on-surface-variant)', textAlign: 'center', padding: '4px 0' }}
+      >
+        ← Tage neu wählen
+      </button>
     </div>
   )
 }

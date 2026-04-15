@@ -26,6 +26,17 @@ export async function api(endpoint, options = {}) {
   return res.json()
 }
 
+// Upload file via multipart/form-data
+export async function apiUpload(endpoint, formData) {
+  const url = `${API_URL}/${endpoint}`
+  const res = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData, // browser sets Content-Type with boundary automatically
+  })
+  return res.json()
+}
+
 export const get = (endpoint) => api(endpoint, { method: 'GET' })
 
 export const post = (endpoint, data) =>
